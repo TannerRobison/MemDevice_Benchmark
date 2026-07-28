@@ -34,3 +34,5 @@ spires/
 #generated files
 *.dat
 *.cir
+
+**/old_python/
