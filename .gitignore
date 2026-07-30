@@ -1,18 +1,3 @@
-.obsidian
-# Environments
-.venv/
-venv/
-env/
-
-# Python cache files
-__pycache__/
-*.pyc
-
-
-#memTorch will need to be cloned & installed locally
-**/MemTorch/
-**/memtorch/
-
 # Block dataset folders
 **/data/
 **/datasets/
@@ -35,4 +20,5 @@ spires/
 *.dat
 *.cir
 
-**/old_python/
+output/*
+!output/.gitkeep

@@ -23,6 +23,11 @@
 static int plot_raster(const Reservoir_State_Matrix *matrix,
 		       size_t neurons_to_plot, double spike_threshold);
 
+static int plot_reservoir_predictions(const double *expected,
+				      const double *predicted,
+				      size_t num_samples, size_t num_outputs,
+				      size_t output_to_plot);
+
 int main(void)
 {
 	// discrete LIF parameters for spires
@@ -141,14 +146,14 @@ int main(void)
 	    .input_series = row_voltages,
 	    .num_samples = state_matrix.num_samples,
 	    .initial_resistance = initial_resistances,
-	    .model_path = "hp_memristor.cir",
+	    .model_path = "models/hp_memristor.cir",
 	    .subcircuit_name = "memristor",
 	    .load_resistance = 50.0,
 	    .time_step = 1e-6,
 	    .stop_time = state_matrix.num_samples * 1e-6,
 	    .print_state_nodes = 0};
 
-	if (generate_crossbar("crossbar.cir", &crossbar_config) < 0) {
+	if (generate_crossbar("output/crossbar.cir", &crossbar_config) < 0) {
 		fprintf(stderr, "failed to create crossbar config");
 		free(initial_resistances);
 		free_reservoir_state_matrix(&state_matrix);
@@ -158,7 +163,7 @@ int main(void)
 	printf("Generated crossbar!!");
 
 	// call ngspice for crossbar
-	if (run_ngspice("crossbar.cir") < 0) {
+	if (run_ngspice("output/crossbar.cir") < 0) {
 		fprintf(stderr, "Failed to run_ngspice");
 		free(initial_resistances);
 		free_reservoir_state_matrix(&state_matrix);
@@ -174,7 +179,7 @@ int main(void)
 	    .time = NULL,
 	    .voltages = NULL};
 
-	if (read_crossbar("crossbar_output.dat", NUM_CROSSBAR_COLUMNS,
+	if (read_crossbar("output/crossbar_output.dat", NUM_CROSSBAR_COLUMNS,
 			  &crossbar_output) < 0) {
 		fprintf(stderr, "Failed to read crossbar output file");
 		free(initial_resistances);
@@ -203,9 +208,13 @@ int main(void)
 
 	// comparing prediction
 	for (int i = 0; i < NUM_TRAINING_STEPS; i++) {
-		printf("real: %g , predicted: %g\n", target_outputs[i],
+		printf("expected: %g , predicted: %g\n", target_outputs[i],
 		       decoded_outputs[i]);
 	}
+
+	// plotting expected vs. prediction
+	plot_reservoir_predictions(target_outputs, decoded_outputs,
+				   NUM_TRAINING_STEPS, NUM_OUTPUTS, 0);
 
 	printf("YAY IT WORKED!!! Cleaning up :)");
 	free(initial_resistances);
@@ -272,7 +281,7 @@ static int plot_raster(const Reservoir_State_Matrix *matrix,
 
 	// output to png
 	plsdev("svg");
-	plsfnam("reservoir_raster.svg");
+	plsfnam("output/reservoir_raster.svg");
 
 	plsetopt("geometry", "1600x1200");
 	plscolbg(255, 255, 255);
@@ -304,5 +313,112 @@ static int plot_raster(const Reservoir_State_Matrix *matrix,
 
 	free(x);
 	free(y);
+	return 0;
+}
+
+static int plot_reservoir_predictions(const double *expected,
+				      const double *predicted,
+				      size_t num_samples, size_t num_outputs,
+				      size_t output_to_plot)
+{
+	PLFLT *x;
+	PLFLT *y_expected;
+	PLFLT *y_predicted;
+	PLFLT y_min;
+	PLFLT y_max;
+
+	if (!expected || !predicted || num_samples == 0 ||
+	    output_to_plot >= num_outputs)
+		return -1;
+
+	x = malloc(num_samples * sizeof(*x));
+	y_expected = malloc(num_samples * sizeof(*y_expected));
+	y_predicted = malloc(num_samples * sizeof(*y_predicted));
+
+	if (!x || !y_expected || !y_predicted) {
+		free(x);
+		free(y_expected);
+		free(y_predicted);
+		return -1;
+	}
+
+	y_min = (PLFLT)expected[output_to_plot];
+	y_max = y_min;
+
+	for (size_t sample = 0; sample < num_samples; sample++) {
+		size_t index;
+
+		index = sample * num_outputs + output_to_plot;
+
+		x[sample] = (PLFLT)sample;
+		y_expected[sample] = (PLFLT)expected[index];
+		y_predicted[sample] = (PLFLT)predicted[index];
+
+		if (y_expected[sample] < y_min)
+			y_min = y_expected[sample];
+
+		if (y_expected[sample] > y_max)
+			y_max = y_expected[sample];
+
+		if (y_predicted[sample] < y_min)
+			y_min = y_predicted[sample];
+
+		if (y_predicted[sample] > y_max)
+			y_max = y_predicted[sample];
+	}
+
+	{
+		PLFLT margin;
+
+		margin = (y_max - y_min) * 0.1;
+
+		if (margin == 0.0)
+			margin = 1.0;
+
+		y_min -= margin;
+		y_max += margin;
+	}
+
+	plsdev("svg");
+	plsfnam("output/reservoir_prediction.svg");
+	plsetopt("geometry", "1600x1000");
+
+	plscolbg(255, 255, 255);
+	plinit();
+
+	plscol0(1, 0, 0, 0);
+	plscol0(2, 30, 90, 200);
+	plscol0(3, 200, 50, 50);
+
+	plcol0(1);
+	plwidth(1.0);
+
+	plenv(0.0, (PLFLT)(num_samples - 1), y_min, y_max, 0, 0);
+
+	pllab("Timestep", "Output", "Expected vs SPICE Crossbar Prediction");
+
+	plcol0(2);
+	plwidth(2.0);
+	plline((PLINT)num_samples, x, y_expected);
+
+	plcol0(3);
+	plwidth(2.0);
+	plline((PLINT)num_samples, x, y_predicted);
+
+	plcol0(1);
+	plcol0(2);
+	plptex((PLFLT)(num_samples * 0.75), y_max - 0.08 * (y_max - y_min), 1.0,
+	       0.0, 0.0, "Expected");
+
+	plcol0(3);
+	plptex((PLFLT)(num_samples * 0.75), y_max - 0.16 * (y_max - y_min), 1.0,
+	       0.0, 0.0, "Predicted");
+
+	plend();
+
+	free(x);
+	free(y_expected);
+	free(y_predicted);
+
 	return 0;
 }

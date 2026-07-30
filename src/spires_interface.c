@@ -90,11 +90,6 @@ int convert_weights_to_resistances(const spires_reservoir *reservoir,
 
 	readout = spires_copy_readout(reservoir);
 
-	// print readout for debugging
-	for (size_t i = 0; i < (num_neurons * num_outputs); i++) {
-		printf("%zu : %g\n", i, readout[i]);
-	}
-
 	resistances =
 	    malloc(num_neurons * num_physical_columns * sizeof(double));
 	if (resistances == NULL) {

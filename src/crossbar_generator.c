@@ -155,7 +155,7 @@ static int write_save_date(FILE *file, const Crossbar_Config *config)
 		}
 	}
 
-	fprintf(file, "\nwrdata crossbar_output.dat");
+	fprintf(file, "\nwrdata output/crossbar_output.dat");
 	for (int column = 0; column < config->columns; column++) {
 		fprintf(file, " v(col%zu)",
 			column); // ive given up on error checking
