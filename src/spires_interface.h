@@ -1,43 +1,35 @@
-#ifndef SPIRES_BACKEND_H
-#define SPIRES_BACKEND_H
+#ifndef SPIRES_INTERFACE_H
+#define SPIRES_INTERFACE_H
 
-#include <stddef.h>
 #include <spires.h>
+#include <stddef.h>
 
 typedef struct {
-    size_t num_samples; //number of time steps
-    size_t num_features;
-    double *states;
+	size_t num_samples; // number of time steps
+	size_t num_features;
+	double *states;
 } Reservoir_State_Matrix;
 
-int collect_reservoir_states(
-    spires_reservoir *reservoir,
-    const double *input_series,
-    size_t series_length,
-    Reservoir_State_Matrix *result
-);
+typedef struct {
+	double g_min;
+	double g_max;
+	double alpha;
+	double max_abs_weight;
+} conductance_mapping;
 
-int map_signed_weights_to_resistance(
-        const double *weights,
-        size_t num_neurons,
-        size_t num_outputs,
-        double resistance_on,
-        double resistance_off,
-        double *resistances,
-        double *conductance_offset,
-        double *conductance_scale
-);
+int collect_reservoir_states(spires_reservoir *reservoir,
+			     const double *input_series, size_t series_length,
+			     Reservoir_State_Matrix *result);
 
-int train_reservoir(
-        spires_reservoir *reservoir,
-        double *input_series,
-        double *taret_series,
-        size_t series_length,
-        double lambda
-);
+int train_reservoir(spires_reservoir *reservoir, double *input_series,
+		    double *taret_series, size_t series_length, double lambda);
 
-void free_reservoir_state_matrix(
-        Reservoir_State_Matrix *matrix
-);
+int convert_weights_to_resistances(const spires_reservoir *reservoir,
+				   size_t num_neurons, size_t num_outputs,
+				   double r_on, double r_off,
+				   double **resistances_out,
+				   conductance_mapping *mapping);
+
+void free_reservoir_state_matrix(Reservoir_State_Matrix *matrix);
 
 #endif

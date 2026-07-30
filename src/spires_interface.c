@@ -1,190 +1,198 @@
 #include "spires_interface.h"
 #include <spires.h>
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stddef.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-int collect_reservoir_states(
-        spires_reservoir *reservoir,
-        const double *input_series,
-        size_t series_length,
-        Reservoir_State_Matrix *result
-) {
-    //error checking
-    //RIP
+int collect_reservoir_states(spires_reservoir *reservoir,
+			     const double *input_series, size_t series_length,
+			     Reservoir_State_Matrix *result)
+{
+	// error checking
+	// RIP
 
-    //clear the result first 
-    result->num_samples = 0;
-    result->num_features = 0;
-    result->states = NULL;
+	// clear the result first
+	result->num_samples = 0;
+	result->num_features = 0;
+	result->states = NULL;
 
-    const size_t num_inputs = spires_num_inputs(reservoir);
+	const size_t num_inputs = spires_num_inputs(reservoir);
 
-    const size_t num_neurons = spires_num_neurons(reservoir);
+	const size_t num_neurons = spires_num_neurons(reservoir);
 
-    if (series_length > SIZE_MAX / num_neurons || series_length * num_neurons 
-            > SIZE_MAX / sizeof(double)) {
-        fprintf(stderr, "matrix size overloaded!!");
-        return -1;
-    }
+	if (series_length > SIZE_MAX / num_neurons ||
+	    series_length * num_neurons > SIZE_MAX / sizeof(double)) {
+		fprintf(stderr, "matrix size overloaded!!");
+		return -1;
+	}
 
-    double *states = malloc(num_neurons * series_length * sizeof(*states));
-    if (!states) {
-        fprintf(stderr, "failed to allocate memory for states");
-        return -1;
-    }
+	double *states = malloc(num_neurons * series_length * sizeof(*states));
+	if (!states) {
+		fprintf(stderr, "failed to allocate memory for states");
+		return -1;
+	}
 
-    spires_status status = spires_reservoir_reset(reservoir);
-    if (status != SPIRES_OK) {
-        fprintf(stderr, "reservoir reset error");
-        free(states);
-        return -1;
-    }
-    
-    // build state_matrix
-    for (size_t i = 0; i < series_length; i++) {
-        const double *current_input = &input_series[i * num_inputs];
-        status = spires_step(reservoir, current_input);
-        if (status != SPIRES_OK){
-            free(states);
-            return -1;
-        }
+	spires_status status = spires_reservoir_reset(reservoir);
+	if (status != SPIRES_OK) {
+		fprintf(stderr, "reservoir reset error");
+		free(states);
+		return -1;
+	}
 
-        double *current_state = &states[i * num_neurons];
-        status = spires_read_reservoir_state(reservoir, current_state);
-        if (status != SPIRES_OK){
-            free(states);
-            return -1;
-        }
-    }
+	// build state_matrix
+	for (size_t i = 0; i < series_length; i++) {
+		const double *current_input = &input_series[i * num_inputs];
+		status = spires_step(reservoir, current_input);
+		if (status != SPIRES_OK) {
+			free(states);
+			return -1;
+		}
 
-    result->num_samples = series_length;
-    result->num_features = num_neurons;
-    result->states = states;
+		double *current_state = &states[i * num_neurons];
+		status = spires_read_reservoir_state(reservoir, current_state);
+		if (status != SPIRES_OK) {
+			free(states);
+			return -1;
+		}
+	}
 
-    return 0;
+	result->num_samples = series_length;
+	result->num_features = num_neurons;
+	result->states = states;
+
+	return 0;
 }
 
-int map_signed_weights_to_resistance(
-        const double *weights,
-        size_t num_neurons,
-        size_t num_outputs,
-        double resistance_on,
-        double resistance_off,
-        double *resistances,
-        double *conductance_offset,
-        double *conductance_scale
-        ) {
-   //safety check arguments
-   if (weights == NULL || resistances == NULL || num_neurons == 0 ||
-        num_outputs == 0 || resistance_on <= 0 || resistance_off <= resistance_on) {
-       return -1;
-   }
+int convert_weights_to_resistances(const spires_reservoir *reservoir,
+				   size_t num_neurons, size_t num_outputs,
+				   double r_on, double r_off,
+				   double **resistances_out,
+				   conductance_mapping *mapping)
+{
+	double *readout;
+	double *resistances;
+	double max_abs_weight = 0.0;
+	size_t weight_count;
+	size_t weight_index;
+	size_t positive_index;
+	size_t negative_index;
+	size_t positive_column;
+	size_t negative_column;
+	double positive_conductance;
+	double negative_conductance;
 
-   const size_t count = num_neurons * num_outputs;
+	*resistances_out = NULL;
+	weight_count = num_neurons * num_outputs;
+	size_t num_physical_columns = num_outputs * 2;
 
-    const double conductance_max = 1.0 / resistance_on;
-    const double conductance_min = 1.0 / resistance_off;
+	readout = spires_copy_readout(reservoir);
 
-    double max_absolute_weight = 0.0;
+	// print readout for debugging
+	for (size_t i = 0; i < (num_neurons * num_outputs); i++) {
+		printf("%zu : %g\n", i, readout[i]);
+	}
 
-    for (size_t i = 0; i < count; i++) {
-        double magnitude = fabs(weights[i]);
+	resistances =
+	    malloc(num_neurons * num_physical_columns * sizeof(double));
+	if (resistances == NULL) {
+		fprintf(stderr, "Failed to allocated crossbar resistances");
+		free(readout);
+		return -1;
+	}
 
-        if (magnitude > max_absolute_weight) {
-            max_absolute_weight = magnitude;
-        }
-    }
+	// get the max weight
+	for (size_t i = 0; i < weight_count; i++) {
+		if (!isfinite(readout[i])) {
+			fprintf(stderr,
+				"invalid readout weight at index %zu: %g\n", i,
+				readout[i]);
+			free(readout);
+			free(resistances);
+			return -1;
+		}
 
-    const double offset =
-        0.5 * (conductance_max + conductance_min);
+		double abs_weight = fabs(readout[i]);
+		if (abs_weight > max_abs_weight) {
+			max_abs_weight = abs_weight;
+		}
+	}
+	printf("max absolute weight = %.12e\n", max_abs_weight);
 
-    if (max_absolute_weight == 0.0) {
-        for (size_t i = 0; i < count; i++) {
-            resistances[i] = 1.0 / offset;
-        }
+	mapping->g_min = 1.0 / r_off;
+	mapping->g_max = 1.0 / r_on;
+	mapping->max_abs_weight = max_abs_weight;
 
-        if (conductance_offset != NULL) {
-            *conductance_offset = offset;
-        }
+	// calculate the alpha scaling parameter to normalize the weights
+	mapping->alpha = (mapping->g_max - mapping->g_min) / max_abs_weight;
 
-        if (conductance_scale != NULL) {
-            *conductance_scale = 0.0;
-        }
+	// differential pair mapping
+	for (size_t neuron = 0; neuron < num_neurons; neuron++) {
+		for (size_t output = 0; output < num_outputs; output++) {
+			weight_index = output * num_neurons + neuron;
+			positive_column = 2 * output;
+			negative_column = positive_column + 1;
 
-        return 0;
-    }
+			positive_index =
+			    neuron * num_physical_columns + positive_column;
+			negative_index =
+			    neuron * num_physical_columns + negative_column;
 
-    const double scale =
-        (conductance_max - conductance_min) /
-        (2.0 * max_absolute_weight);
+			double weight = readout[weight_index];
+			if (weight >= 0.0) {
+				positive_conductance =
+				    mapping->g_min + mapping->alpha * weight;
+				negative_conductance = mapping->g_min;
+			}
+			if (weight < 0.0) {
+				positive_conductance = mapping->g_min;
+				negative_conductance =
+				    mapping->g_min + mapping->alpha * (-weight);
+			}
 
-    for (size_t i = 0; i < count; i++) {
-        double conductance =
-            offset + scale * weights[i];
+			resistances[positive_index] =
+			    1.0 / positive_conductance;
+			resistances[negative_index] =
+			    1.0 / negative_conductance;
+		}
+	}
+	printf("max absolute weight = %.12e\n", mapping->max_abs_weight);
+	printf("alpha = %.12e\n", mapping->alpha);
+	printf("physical crossbar dimensions: %zu x %zu\n", num_neurons,
+	       num_physical_columns);
 
-        /*
-         * Protect against small floating-point excursions.
-         */
-        if (conductance < conductance_min) {
-            conductance = conductance_min;
-        } else if (conductance > conductance_max) {
-            conductance = conductance_max;
-        }
+	*resistances_out = resistances;
+	free(readout);
 
-        resistances[i] = 1.0 / conductance;
-    }
-
-    if (conductance_offset != NULL) {
-        *conductance_offset = offset;
-    }
-
-    if (conductance_scale != NULL) {
-        *conductance_scale = scale;
-    }
-
-    return 0;
+	return 0;
 }
 
-int train_reservoir(
-        spires_reservoir *reservoir,
-        double *input_series,
-        double *target_series,
-        size_t series_length,
-        double lambda
-) {
-    spires_status status = spires_train_ridge(
-            reservoir, 
-            (double *)input_series, 
-            (double *)target_series,
-            series_length, 
-            lambda
-    );
+int train_reservoir(spires_reservoir *reservoir, double *input_series,
+		    double *target_series, size_t series_length, double lambda)
+{
+	spires_status status =
+	    spires_train_ridge(reservoir, (double *)input_series,
+			       (double *)target_series, series_length, lambda);
 
-    if (status != SPIRES_OK) {
-        fprintf(stderr, "Spires ridge training failed");
-        return -1;
-    }
-    //need to figure out how to scale weights to conductance values,
-    
-    //that are then the reciprocal of the resistances
-    
-    //Also need to find some conversion for output column current, and target_series
-    return 0;
+	if (status != SPIRES_OK) {
+		fprintf(stderr, "Spires ridge training failed");
+		return -1;
+	}
 
+	return 0;
 }
 
-void free_reservoir_state_matrix(Reservoir_State_Matrix *matrix) {
-    if (!matrix) {
-        return;
-    }
+void free_reservoir_state_matrix(Reservoir_State_Matrix *matrix)
+{
+	if (!matrix) {
+		return;
+	}
 
-    free(matrix->states);
+	free(matrix->states);
 
-    matrix->states = NULL;
-    matrix->num_samples = 0;
-    matrix->num_features = 0;
+	matrix->states = NULL;
+	matrix->num_samples = 0;
+	matrix->num_features = 0;
 }

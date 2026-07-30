@@ -4,7 +4,7 @@ TARGET := main
 SPIRES_DIR := ../spires
 
 SOURCES := main.c spires_interface.c crossbar_generator.c read_crossbar.c
-OBJECTS := $(SOURCES:.c=.o)
+OBJECTS := $(SOURCES:.c=.a)
 
 PLPLOT_LIBS   := $(shell pkg-config --libs plplot)
 
@@ -23,7 +23,7 @@ all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o $(TARGET)
 
-%.o: %.c
+%.a: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 run: $(TARGET)
