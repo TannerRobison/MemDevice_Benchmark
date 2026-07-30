@@ -64,8 +64,10 @@ int main(void)
 	double training_inputs[NUM_TRAINING_STEPS * NUM_INPUTS];
 	for (size_t timestep = 0; timestep < NUM_TRAINING_STEPS; timestep++) {
 		for (size_t input = 0; input < NUM_INPUTS; input++) {
-			training_inputs[timestep * NUM_INPUTS + input] =
-			    sin(2.0 * PI * (double)timestep / 50.0);
+			double signal =
+			    0.7 * sin(2.0 * PI * (double)timestep / 50.0) +
+			    0.3 * sin(2.0 * PI * (double)timestep / 17.0);
+			training_inputs[timestep * NUM_INPUTS + input] = signal;
 		}
 	}
 
@@ -73,7 +75,10 @@ int main(void)
 	double target_outputs[NUM_TRAINING_STEPS * NUM_OUTPUTS];
 	for (size_t timestep = 0; timestep < NUM_TRAINING_STEPS; timestep++) {
 		size_t next_timestep = (timestep + 1) % NUM_TRAINING_STEPS;
-		double target = sin(2.0 * PI * (double)next_timestep / 50.0);
+
+		double target =
+		    0.7 * sin(2.0 * PI * (double)next_timestep / 50.0) +
+		    0.3 * sin(2.0 * PI * (double)next_timestep / 17.0);
 		for (size_t output = 0; output < NUM_OUTPUTS; output++) {
 			target_outputs[timestep * NUM_OUTPUTS + output] =
 			    target;
