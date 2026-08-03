@@ -1,0 +1,27 @@
+#ifndef BENCHMARK_H
+#define BENCHMARK_H
+
+#include "crossbar_generator.h"
+#include "read_crossbar.h"
+#include "spires_interface.h"
+#include <stddef.h>
+
+typedef struct {
+	const char *model_path;
+	const char *subcircuit_name;
+} MemModel;
+
+int run_benchmark(const spires_reservoir_config *config,
+		  spires_reservoir *reservoir,
+		  Reservoir_State_Matrix *state_matrix,
+		  const double *target_outputs, const char *model_path,
+		  const char *subcircuit_name);
+
+int plot_raster(const Reservoir_State_Matrix *matrix, size_t neurons_to_plot,
+		double spike_threshold);
+
+int plot_reservoir_predictions(const double *expected, const double *predicted,
+			       size_t num_samples, size_t num_outputs,
+			       size_t output_to_plot);
+
+#endif

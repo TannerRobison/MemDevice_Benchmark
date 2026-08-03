@@ -8,10 +8,11 @@ BIN_DIR = bin
 TARGET = $(BIN_DIR)/benchmark
 
 SOURCES = \
-	$(SRC_DIR)/main.c \
+	$(SRC_DIR)/application.c \
 	$(SRC_DIR)/spires_interface.c \
 	$(SRC_DIR)/crossbar_generator.c \
-	$(SRC_DIR)/read_crossbar.c
+	$(SRC_DIR)/read_crossbar.c \
+	$(SRC_DIR)/benchmark.c 
 
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 

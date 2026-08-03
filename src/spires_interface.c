@@ -72,25 +72,17 @@ int convert_weights_to_resistances(const spires_reservoir *reservoir,
 				   double **resistances_out,
 				   conductance_mapping *mapping)
 {
-	double *readout;
-	double *resistances;
 	double max_abs_weight = 0.0;
-	size_t weight_count;
-	size_t weight_index;
-	size_t positive_index;
-	size_t negative_index;
-	size_t positive_column;
-	size_t negative_column;
-	double positive_conductance;
-	double negative_conductance;
 
 	*resistances_out = NULL;
-	weight_count = num_neurons * num_outputs;
+	size_t weight_count = num_neurons * num_outputs;
 	size_t num_physical_columns = num_outputs * 2;
 
-	readout = spires_copy_readout(reservoir);
+	double *readout = malloc(num_neurons * num_outputs * sizeof(double));
 
-	resistances =
+	spires_read_readout(reservoir, readout);
+
+	double *resistances =
 	    malloc(num_neurons * num_physical_columns * sizeof(double));
 	if (resistances == NULL) {
 		fprintf(stderr, "Failed to allocated crossbar resistances");
@@ -126,13 +118,15 @@ int convert_weights_to_resistances(const spires_reservoir *reservoir,
 	// differential pair mapping
 	for (size_t neuron = 0; neuron < num_neurons; neuron++) {
 		for (size_t output = 0; output < num_outputs; output++) {
-			weight_index = output * num_neurons + neuron;
-			positive_column = 2 * output;
-			negative_column = positive_column + 1;
+			size_t weight_index = output * num_neurons + neuron;
+			size_t positive_column = 2 * output;
+			size_t negative_column = positive_column + 1;
+			double positive_conductance;
+			double negative_conductance;
 
-			positive_index =
+			size_t positive_index =
 			    neuron * num_physical_columns + positive_column;
-			negative_index =
+			size_t negative_index =
 			    neuron * num_physical_columns + negative_column;
 
 			double weight = readout[weight_index];

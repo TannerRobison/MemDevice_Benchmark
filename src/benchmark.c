@@ -8,160 +8,71 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define NUM_NEURONS 400
-#define NUM_INPUTS 4
-#define NUM_OUTPUTS 2
-#define NUM_CROSSBAR_COLUMNS (NUM_OUTPUTS * 2)
 #define NUM_TRAINING_STEPS 500
-#define NUM_STEPS 2000
 
-#define SPIKE_THRESHOLD 0.9
-#define SPIKE_AMPLITUDE 0.1
+#define SPIKE_THRESHOLD 0.1
+#define SPIKE_AMPLITUDE 1
 
-#define PI 3.14159265358979323846
+int plot_reservoir_predictions(const double *expected, const double *predicted,
+			       size_t num_samples, size_t num_outputs,
+			       size_t output_to_plot);
 
-static int plot_raster(const Reservoir_State_Matrix *matrix,
-		       size_t neurons_to_plot, double spike_threshold);
-
-static int plot_reservoir_predictions(const double *expected,
-				      const double *predicted,
-				      size_t num_samples, size_t num_outputs,
-				      size_t output_to_plot);
-
-int main(void)
+int run_benchmark(const spires_reservoir_config *config,
+		  spires_reservoir *reservoir,
+		  Reservoir_State_Matrix *state_matrix,
+		  const double *target_outputs, const char *model_path,
+		  const char *subcircuit_name)
 {
-	// discrete LIF parameters for spires
-	double lif_config[] = {
-	    0.0, // V_off
-	    1.0, // V_th
-	    0.2, // leak rate
-	    0.5, // bias
-	};
-
-	const spires_reservoir_config config = {
-	    .num_neurons = NUM_NEURONS,
-	    .num_inputs = NUM_INPUTS,
-	    .num_outputs = NUM_OUTPUTS,
-	    .spectral_radius = 0.95,
-	    .ei_ratio = 0.8,
-	    .input_strength = 0.1,
-	    .connectivity = 0.1,
-	    .dt = 1.0,
-	    .connectivity_type = SPIRES_CONN_RANDOM,
-	    .neuron_type = SPIRES_NEURON_LIF_DISCRETE,
-	    .neuron_params = lif_config};
-
-	spires_reservoir *reservoir = NULL;
-
-	spires_status status = spires_reservoir_create(&config, &reservoir);
-
-	if (status != SPIRES_OK) {
-		fprintf(stderr, "Failed to create reservoir");
-		return -1;
-	}
-
-	// create training inputs
-	double training_inputs[NUM_TRAINING_STEPS * NUM_INPUTS];
-	for (size_t timestep = 0; timestep < NUM_TRAINING_STEPS; timestep++) {
-		for (size_t input = 0; input < NUM_INPUTS; input++) {
-			double signal =
-			    0.7 * sin(2.0 * PI * (double)timestep / 50.0) +
-			    0.3 * sin(2.0 * PI * (double)timestep / 17.0);
-			training_inputs[timestep * NUM_INPUTS + input] = signal;
-		}
-	}
-
-	// create target outputs
-	double target_outputs[NUM_TRAINING_STEPS * NUM_OUTPUTS];
-	for (size_t timestep = 0; timestep < NUM_TRAINING_STEPS; timestep++) {
-		size_t next_timestep = (timestep + 1) % NUM_TRAINING_STEPS;
-
-		double target =
-		    0.7 * sin(2.0 * PI * (double)next_timestep / 50.0) +
-		    0.3 * sin(2.0 * PI * (double)next_timestep / 17.0);
-		for (size_t output = 0; output < NUM_OUTPUTS; output++) {
-			target_outputs[timestep * NUM_OUTPUTS + output] =
-			    target;
-		}
-	}
-
-	Reservoir_State_Matrix state_matrix = {0};
-	if (collect_reservoir_states(reservoir, training_inputs,
-				     NUM_TRAINING_STEPS, &state_matrix) != 0) {
-		fprintf(stderr, "Failed to collect reservoir states");
-		spires_reservoir_destroy(reservoir);
-		return -1;
-	}
-	printf("collected state matrix: %zu x %zu\n", state_matrix.num_samples,
-	       state_matrix.num_features);
-
-	// training the readout layer
-	const double lambda = 1.0e-4;
-	int training_status =
-	    train_reservoir(reservoir, training_inputs, target_outputs,
-			    NUM_TRAINING_STEPS, lambda);
-	if (training_status < 0) {
-		fprintf(stderr, "Failed to train the reservoir");
-		free_reservoir_state_matrix(&state_matrix);
-		spires_reservoir_destroy(reservoir);
-		return -1;
-	}
-
-	// generate raster plot for verification
-	if (plot_raster(&state_matrix, NUM_NEURONS, SPIKE_THRESHOLD) != 0) {
-		fprintf(stderr, "Failed to plot raster\n");
-	}
-
 	// copy readout weights and convert to conductances
 	double *initial_resistances = NULL;
 	conductance_mapping mapping;
 
 	if (convert_weights_to_resistances(
-		reservoir, NUM_NEURONS, NUM_OUTPUTS, 1000.0, 100000.0,
-		&initial_resistances, &mapping) != 0) {
+		reservoir, config->num_neurons, config->num_outputs, 1000.0,
+		100000.0, &initial_resistances, &mapping) != 0) {
 		return -1;
 	}
 
 	double *row_voltages =
-	    malloc(state_matrix.num_features * state_matrix.num_samples *
+	    malloc(state_matrix->num_features * state_matrix->num_samples *
 		   sizeof(double));
 
 	if (row_voltages == NULL) {
 		fprintf(stderr, "Failed to allocate spikes voltages");
 		free(initial_resistances);
-		free_reservoir_state_matrix(&state_matrix);
+		free_reservoir_state_matrix(state_matrix);
 		spires_reservoir_destroy(reservoir);
 		return -1;
 	}
 
-	for (size_t sample = 0; sample < state_matrix.num_samples; sample++) {
-		for (size_t neuron = 0; neuron < state_matrix.num_features;
+	for (size_t sample = 0; sample < state_matrix->num_samples; sample++) {
+		for (size_t neuron = 0; neuron < state_matrix->num_features;
 		     neuron++) {
 			size_t index =
-			    sample * state_matrix.num_features + neuron;
+			    sample * state_matrix->num_features + neuron;
 
 			row_voltages[index] =
-			    SPIKE_AMPLITUDE * state_matrix.states[index];
+			    SPIKE_AMPLITUDE * state_matrix->states[index];
 		}
 	}
 
 	const Crossbar_Config crossbar_config = {
-	    .rows = state_matrix.num_features,
-	    .columns = NUM_CROSSBAR_COLUMNS,
+	    .rows = state_matrix->num_features,
+	    .columns = config->num_outputs * 2,
 	    .input_series = row_voltages,
-	    .num_samples = state_matrix.num_samples,
+	    .num_samples = state_matrix->num_samples,
 	    .initial_resistance = initial_resistances,
-	    .model_path = "models/hp_memristor.cir",
-	    .subcircuit_name = "memristor",
 	    .load_resistance = 50.0,
+	    .model_path = model_path,
+	    .subcircuit_name = subcircuit_name,
 	    .time_step = 1e-6,
-	    .stop_time = state_matrix.num_samples * 1e-6,
-	    .print_state_nodes = 0};
+	    .stop_time = state_matrix->num_samples * 1e-6,
+	    .print_state_nodes = 0}; // state nodes is not acutally implemented
 
 	if (generate_crossbar("output/crossbar.cir", &crossbar_config) < 0) {
 		fprintf(stderr, "failed to create crossbar config");
 		free(initial_resistances);
-		free_reservoir_state_matrix(&state_matrix);
+		free_reservoir_state_matrix(state_matrix);
 		spires_reservoir_destroy(reservoir);
 		return -1;
 	}
@@ -171,7 +82,7 @@ int main(void)
 	if (run_ngspice("output/crossbar.cir") < 0) {
 		fprintf(stderr, "Failed to run_ngspice");
 		free(initial_resistances);
-		free_reservoir_state_matrix(&state_matrix);
+		free_reservoir_state_matrix(state_matrix);
 		spires_reservoir_destroy(reservoir);
 		return -1;
 	}
@@ -179,16 +90,16 @@ int main(void)
 
 	// crossbar parameters needed for reading
 	Crossbar_Output_Matrix crossbar_output = {
-	    .num_samples = NUM_TRAINING_STEPS,
-	    .num_outputs = NUM_CROSSBAR_COLUMNS,
+	    .num_samples = state_matrix->num_samples,
+	    .num_outputs = config->num_outputs * 2,
 	    .time = NULL,
 	    .voltages = NULL};
 
-	if (read_crossbar("output/crossbar_output.dat", NUM_CROSSBAR_COLUMNS,
+	if (read_crossbar("output/crossbar_output.dat", config->num_outputs * 2,
 			  &crossbar_output) < 0) {
 		fprintf(stderr, "Failed to read crossbar output file");
 		free(initial_resistances);
-		free_reservoir_state_matrix(&state_matrix);
+		free_reservoir_state_matrix(state_matrix);
 		spires_reservoir_destroy(reservoir);
 		free_crossbar_output_matrix(&crossbar_output);
 		return -1;
@@ -196,13 +107,13 @@ int main(void)
 	printf("read the crossbar outputs!!\n");
 
 	double *decoded_outputs =
-	    malloc(NUM_OUTPUTS * NUM_TRAINING_STEPS * sizeof(double));
+	    malloc(config->num_outputs * NUM_TRAINING_STEPS * sizeof(double));
 	if (decoded_outputs == NULL) {
 		fprintf(stderr,
 			"Failed to allocate memory for decoded outputs");
 	}
 	if (convert_output_to_software(
-		NUM_NEURONS, NUM_OUTPUTS, NUM_TRAINING_STEPS,
+		config->num_neurons, config->num_outputs, NUM_TRAINING_STEPS,
 		crossbar_output.voltages, initial_resistances,
 		crossbar_config.load_resistance, &mapping, row_voltages,
 		SPIKE_AMPLITUDE, decoded_outputs) < 0) {
@@ -219,22 +130,19 @@ int main(void)
 
 	// plotting expected vs. prediction
 	plot_reservoir_predictions(target_outputs, decoded_outputs,
-				   NUM_TRAINING_STEPS, NUM_OUTPUTS, 0);
+				   NUM_TRAINING_STEPS, config->num_outputs, 0);
 
 	printf("YAY IT WORKED!!! Cleaning up :)");
 	free(initial_resistances);
-	// free(spikes_voltages);
 	free(row_voltages);
 	free(decoded_outputs);
-	free_reservoir_state_matrix(&state_matrix);
-	spires_reservoir_destroy(reservoir);
 	free_crossbar_output_matrix(&crossbar_output);
 
 	return 0;
 }
 
-static int plot_raster(const Reservoir_State_Matrix *matrix,
-		       size_t neurons_to_plot, double spike_threshold)
+int plot_raster(const Reservoir_State_Matrix *matrix, size_t neurons_to_plot,
+		double spike_threshold)
 {
 	if (!matrix || !matrix->states || matrix->num_samples == 0) {
 		return -1;
@@ -321,10 +229,9 @@ static int plot_raster(const Reservoir_State_Matrix *matrix,
 	return 0;
 }
 
-static int plot_reservoir_predictions(const double *expected,
-				      const double *predicted,
-				      size_t num_samples, size_t num_outputs,
-				      size_t output_to_plot)
+int plot_reservoir_predictions(const double *expected, const double *predicted,
+			       size_t num_samples, size_t num_outputs,
+			       size_t output_to_plot)
 {
 	PLFLT *x;
 	PLFLT *y_expected;

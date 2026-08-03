@@ -1,29 +1,11 @@
 OH MY GOD SO MUCH HAS CHANGED NEED TO UPDATE
 
-# Spires reservoir simulated on memristor crossbar using memTorch
-## setup
-### general
-python3 -m venv .venv
-
-pip install -r requirements.txt
-
-### memTorch
-
-git clone --recursive https://github.com/coreylammie/MemTorch
-
-cd memTorch
-
-python setup.py install
-
-### spires
-
+# memristor crossbar readout layer for reservoir computer
+##setup 
+### download spires
 
 ## overview
 ### simulation
-Here we are using both memTorch and the Spiresrc libraries working together to simulate
-a spires reservoir on a memristor crossbar. memTorch is acting as the weights, simulating
-at a physics level including device to device differences, conductance drag, etc....
-Spires is acting as the actual reservoir neurons and determining the spikes.
 
 ### benchmark
 
