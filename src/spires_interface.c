@@ -106,7 +106,6 @@ int convert_weights_to_resistances(const spires_reservoir *reservoir,
 			max_abs_weight = abs_weight;
 		}
 	}
-	printf("max absolute weight = %.12e\n", max_abs_weight);
 
 	mapping->g_min = 1.0 / r_off;
 	mapping->g_max = 1.0 / r_on;
@@ -147,10 +146,10 @@ int convert_weights_to_resistances(const spires_reservoir *reservoir,
 			    1.0 / negative_conductance;
 		}
 	}
-	printf("max absolute weight = %.12e\n", mapping->max_abs_weight);
-	printf("alpha = %.12e\n", mapping->alpha);
-	printf("physical crossbar dimensions: %zu x %zu\n", num_neurons,
-	       num_physical_columns);
+	// printf("max absolute weight = %.12e\n", mapping->max_abs_weight);
+	// printf("alpha = %.12e\n", mapping->alpha);
+	// printf("physical crossbar dimensions: %zu x %zu\n", num_neurons,
+	//        num_physical_columns);
 
 	*resistances_out = resistances;
 	free(readout);

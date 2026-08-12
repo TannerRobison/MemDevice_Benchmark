@@ -1,3 +1,4 @@
+#include "benchmark.h"
 #include "crossbar_generator.h"
 #include "read_crossbar.h"
 #include "spires_interface.h"
@@ -7,21 +8,15 @@
 #include <spires.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#define NUM_TRAINING_STEPS 500
+#include <string.h>
 
 #define SPIKE_THRESHOLD 0.1
-#define SPIKE_AMPLITUDE 1
-
-int plot_reservoir_predictions(const double *expected, const double *predicted,
-			       size_t num_samples, size_t num_outputs,
-			       size_t output_to_plot);
+#define SPIKE_AMPLITUDE 0.1
 
 int run_benchmark(const spires_reservoir_config *config,
 		  spires_reservoir *reservoir,
-		  Reservoir_State_Matrix *state_matrix,
-		  const double *target_outputs, const char *model_path,
-		  const char *subcircuit_name)
+		  Reservoir_State_Matrix *state_matrix, const char *model_path,
+		  const char *subcircuit_name, double *predictions_out)
 {
 	// copy readout weights and convert to conductances
 	double *initial_resistances = NULL;
@@ -106,39 +101,40 @@ int run_benchmark(const spires_reservoir_config *config,
 	}
 	printf("read the crossbar outputs!!\n");
 
-	double *decoded_outputs =
-	    malloc(config->num_outputs * NUM_TRAINING_STEPS * sizeof(double));
-	if (decoded_outputs == NULL) {
-		fprintf(stderr,
-			"Failed to allocate memory for decoded outputs");
-	}
 	if (convert_output_to_software(
-		config->num_neurons, config->num_outputs, NUM_TRAINING_STEPS,
-		crossbar_output.voltages, initial_resistances,
-		crossbar_config.load_resistance, &mapping, row_voltages,
-		SPIKE_AMPLITUDE, decoded_outputs) < 0) {
+		config->num_neurons, config->num_outputs,
+		state_matrix->num_samples, crossbar_output.voltages,
+		initial_resistances, crossbar_config.load_resistance, &mapping,
+		row_voltages, SPIKE_AMPLITUDE, predictions_out) < 0) {
 		fprintf(stderr,
 			"Failed to convert crossbar outputs back to software");
 		return -1;
 	}
 
-	// comparing prediction
-	for (int i = 0; i < NUM_TRAINING_STEPS; i++) {
-		printf("expected: %g , predicted: %g\n", target_outputs[i],
-		       decoded_outputs[i]);
-	}
-
-	// plotting expected vs. prediction
-	plot_reservoir_predictions(target_outputs, decoded_outputs,
-				   NUM_TRAINING_STEPS, config->num_outputs, 0);
-
-	printf("YAY IT WORKED!!! Cleaning up :)");
+	printf("YAY IT WORKED!!! Cleaning up :)\n");
 	free(initial_resistances);
 	free(row_voltages);
-	free(decoded_outputs);
 	free_crossbar_output_matrix(&crossbar_output);
 
 	return 0;
+}
+
+double calculate_MSE(const double *expected, const double *predicted,
+		     const size_t num_steps, const size_t num_outputs)
+{
+	double aggregate = 0.0;
+	for (size_t output = 0; output < num_outputs; output++) {
+		for (size_t timestep = 0; timestep < num_steps; timestep++) {
+			double error =
+			    expected[timestep * num_outputs + output] -
+			    predicted[timestep * num_outputs + output];
+			double squared = error * error;
+			aggregate += squared;
+		}
+	}
+
+	double full_mse = 100 * aggregate / (num_steps * num_outputs);
+	return full_mse;
 }
 
 int plot_raster(const Reservoir_State_Matrix *matrix, size_t neurons_to_plot,
@@ -192,7 +188,6 @@ int plot_raster(const Reservoir_State_Matrix *matrix, size_t neurons_to_plot,
 		}
 	}
 
-	// output to png
 	plsdev("svg");
 	plsfnam("output/reservoir_raster.svg");
 
@@ -202,7 +197,7 @@ int plot_raster(const Reservoir_State_Matrix *matrix, size_t neurons_to_plot,
 	plinit();
 
 	plscol0(1, 40, 40, 40); // gray axis
-	plscol0(2, 0, 0, 0);	// blue points
+	plscol0(2, 0, 0, 0);
 
 	plcol0(1);
 	plwidth(1.0);
@@ -231,7 +226,7 @@ int plot_raster(const Reservoir_State_Matrix *matrix, size_t neurons_to_plot,
 
 int plot_reservoir_predictions(const double *expected, const double *predicted,
 			       size_t num_samples, size_t num_outputs,
-			       size_t output_to_plot)
+			       size_t output_to_plot, const char *model_path)
 {
 	PLFLT *x;
 	PLFLT *y_expected;
@@ -292,7 +287,36 @@ int plot_reservoir_predictions(const double *expected, const double *predicted,
 	}
 
 	plsdev("svg");
-	plsfnam("output/reservoir_prediction.svg");
+
+	// parses real model name
+	// written by chatGPT
+	char filename[256];
+	char model_name[128];
+	const char *base;
+	const char *dot;
+	size_t len;
+
+	base = strrchr(model_path, '/');
+	base = base ? base + 1 : model_path;
+
+	dot = strrchr(base, '.');
+	len = dot ? (size_t)(dot - base) : strlen(base);
+
+	if (len >= sizeof(model_name))
+		len = sizeof(model_name) - 1;
+
+	memcpy(model_name, base, len);
+	model_name[len] = '\0';
+
+	if (snprintf(filename, sizeof(filename),
+		     "output/reservoir_prediction_%s.svg",
+		     model_name) >= (int)sizeof(filename)) {
+		fprintf(stderr, "Output filename is too long\n");
+		return -1;
+	}
+
+	plsfnam(filename);
+
 	plsetopt("geometry", "1600x1000");
 
 	plscolbg(255, 255, 255);
@@ -307,7 +331,8 @@ int plot_reservoir_predictions(const double *expected, const double *predicted,
 
 	plenv(0.0, (PLFLT)(num_samples - 1), y_min, y_max, 0, 0);
 
-	pllab("Timestep", "Output", "Expected vs SPICE Crossbar Prediction");
+	pllab("Timestep", "Output",
+	      "Expected vs SPICE Crossbar readout Prediction");
 
 	plcol0(2);
 	plwidth(2.0);

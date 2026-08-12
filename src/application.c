@@ -26,45 +26,27 @@
 
 int main(void)
 {
-	// get number of files in model directory
-	// This can be replaced later in for loop with number of models to test
-	// size_t model_count = 0;
-	// DIR *dirp;
-	// struct dirent *entry;
-	//
-	// dirp = opendir("models");
-	// while ((entry = readdir(dirp)) != NULL) {
-	// 	if (entry->d_type == DT_REG) {
-	// 		model_count++;
-	// 	}
-	// }
-	// closedir(dirp);
-
 	/* ---------- LIST ALL MODELS HERE ----------*/
 	MemModel models[] = {
+	    {
+		.model_path = "models/fixed_resistor.cir",
+		.subcircuit_name = "fixed_resistor",
+	    },
 	    {
 		.model_path = "models/hp_memristor.cir",
 		.subcircuit_name = "memristor",
 	    },
 	    {
-		.model_path = "models/fixed_resistor.cir",
-		.subcircuit_name = "fixed_resistor",
+		.model_path = "models/yakopcic_memristor.cir",
+		.subcircuit_name = "MEM_YAKOPCIC",
+	    },
+	    {
+		.model_path = "models/Pershin_DiVentra_memristor.cir",
+		.subcircuit_name = "memristor",
 	    },
 	};
 
 	size_t model_count = sizeof(models) / sizeof(models[0]);
-
-	// MemModel hp_memristor = {.model_path = "models/hp_memristor.cir",
-	// 			 .subcircuit_name = "memristor"};
-	//
-	// MemModel normal_resistor = {.model_path =
-	// "models/fixed_resistor.cir", .subcircuit_name = "fixed_resistor"};
-	//
-	// MemModel *models = calloc(model_count, sizeof(MemModel));
-	// if (models == NULL) {
-	// 	fprintf(stderr, "Failed to allocate for model list");
-	// 	return -1;
-	// }
 
 	/* ---------- SPIRES SET UP ----------*/
 	// discrete LIF parameters for spires
@@ -145,17 +127,52 @@ int main(void)
 	}
 
 	/* ---------- Run Benchmark on each model ----------*/
-	for (size_t i = 0; i < model_count; i++) {
-		printf("Running benchmark on %s\n", models[i].model_path);
+	size_t predictions_per_model =
+	    state_matrix.num_samples * config.num_outputs;
+
+	double *predictions = malloc(model_count * NUM_OUTPUTS *
+				     NUM_TRAINING_STEPS * sizeof(double));
+	if (predictions == NULL) {
+		fprintf(stderr, "Failed to allocate memroy for predictions");
+		free_reservoir_state_matrix(&state_matrix);
+		spires_reservoir_destroy(reservoir);
+		return -1;
+	}
+
+	double mean_squared_error[model_count];
+
+	for (size_t model = 0; model < model_count; model++) {
+		double *model_predictions =
+		    predictions + model * predictions_per_model;
+		printf("\n\nRunning benchmark on %s\n",
+		       models[model].model_path);
+
 		if (run_benchmark(&config, reservoir, &state_matrix,
-				  target_outputs, models[i].model_path,
-				  models[i].subcircuit_name) < 0) {
+				  models[model].model_path,
+				  models[model].subcircuit_name,
+				  model_predictions) < 0) {
 			fprintf(stderr, "Failed to run benchmark");
+			free(predictions);
+			free_reservoir_state_matrix(&state_matrix);
 			spires_reservoir_destroy(reservoir);
 			return -1;
 		}
+
+		plot_reservoir_predictions(
+		    target_outputs, model_predictions, state_matrix.num_samples,
+		    config.num_outputs, 0, models[model].model_path);
+
+		mean_squared_error[model] =
+		    calculate_MSE(target_outputs, model_predictions,
+				  state_matrix.num_samples, config.num_outputs);
 	}
 
+	for (size_t model = 0; model < model_count; model++) {
+		printf("Model: %s, MSE: %.17g\n", models[model].model_path,
+		       mean_squared_error[model]);
+	}
+
+	free(predictions);
 	free_reservoir_state_matrix(&state_matrix);
 	spires_reservoir_destroy(reservoir);
 
