@@ -26,4 +26,12 @@ int plot_reservoir_predictions(const double *expected, const double *predicted,
 			       size_t num_samples, size_t num_outputs,
 			       size_t output_to_plot, const char *model_path);
 
+int plot_model_delta(const double *fixed, const double *model,
+		     size_t num_samples, size_t num_outputs,
+		     size_t output_to_plot, const char *model_path);
+
+int plot_all_model_deltas(const double *predictions, const MemModel *models,
+			  size_t model_count, size_t num_samples,
+			  size_t num_outputs, size_t output_to_plot);
+
 #endif

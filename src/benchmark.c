@@ -67,8 +67,6 @@ int run_benchmark(const spires_reservoir_config *config,
 	if (generate_crossbar("output/crossbar.cir", &crossbar_config) < 0) {
 		fprintf(stderr, "failed to create crossbar config");
 		free(initial_resistances);
-		free_reservoir_state_matrix(state_matrix);
-		spires_reservoir_destroy(reservoir);
 		return -1;
 	}
 	printf("Generated crossbar!!");
@@ -77,8 +75,6 @@ int run_benchmark(const spires_reservoir_config *config,
 	if (run_ngspice("output/crossbar.cir") < 0) {
 		fprintf(stderr, "Failed to run_ngspice");
 		free(initial_resistances);
-		free_reservoir_state_matrix(state_matrix);
-		spires_reservoir_destroy(reservoir);
 		return -1;
 	}
 	printf("ran ngspice!!");
@@ -94,8 +90,6 @@ int run_benchmark(const spires_reservoir_config *config,
 			  &crossbar_output) < 0) {
 		fprintf(stderr, "Failed to read crossbar output file");
 		free(initial_resistances);
-		free_reservoir_state_matrix(state_matrix);
-		spires_reservoir_destroy(reservoir);
 		free_crossbar_output_matrix(&crossbar_output);
 		return -1;
 	}
@@ -133,7 +127,7 @@ double calculate_MSE(const double *expected, const double *predicted,
 		}
 	}
 
-	double full_mse = 100 * aggregate / (num_steps * num_outputs);
+	double full_mse = aggregate / (num_steps * num_outputs);
 	return full_mse;
 }
 
@@ -356,6 +350,226 @@ int plot_reservoir_predictions(const double *expected, const double *predicted,
 	free(x);
 	free(y_expected);
 	free(y_predicted);
+
+	return 0;
+}
+
+int plot_model_delta(const double *fixed, const double *model,
+		     size_t num_samples, size_t num_outputs,
+		     size_t output_to_plot, const char *model_path)
+{
+	PLFLT *x;
+	PLFLT *delta;
+	PLFLT max_abs_delta = 0.0;
+	char filename[256];
+	char model_name[128];
+	const char *base;
+	const char *dot;
+	size_t len;
+
+	if (!fixed || !model || !model_path || num_samples == 0 ||
+	    output_to_plot >= num_outputs)
+		return -1;
+
+	x = malloc(num_samples * sizeof(*x));
+	delta = malloc(num_samples * sizeof(*delta));
+
+	if (!x || !delta) {
+		free(x);
+		free(delta);
+		return -1;
+	}
+
+	for (size_t sample = 0; sample < num_samples; sample++) {
+		size_t index;
+		PLFLT abs_delta;
+
+		index = sample * num_outputs + output_to_plot;
+
+		x[sample] = (PLFLT)sample;
+		delta[sample] = (PLFLT)fabs(model[index] - fixed[index]);
+		abs_delta = (PLFLT)fabs(delta[sample]);
+
+		if (abs_delta > max_abs_delta)
+			max_abs_delta = abs_delta;
+	}
+
+	if (max_abs_delta == 0.0)
+		max_abs_delta = 1.0e-6;
+
+	max_abs_delta *= 1.1;
+
+	base = strrchr(model_path, '/');
+	base = base ? base + 1 : model_path;
+
+	dot = strrchr(base, '.');
+	len = dot ? (size_t)(dot - base) : strlen(base);
+
+	if (len >= sizeof(model_name))
+		len = sizeof(model_name) - 1;
+
+	memcpy(model_name, base, len);
+	model_name[len] = '\0';
+
+	if (snprintf(filename, sizeof(filename), "output/model_delta_%s.svg",
+		     model_name) >= (int)sizeof(filename)) {
+		free(x);
+		free(delta);
+		return -1;
+	}
+
+	plsdev("svg");
+	plsfnam(filename);
+	plsetopt("geometry", "1600x1000");
+
+	plscolbg(255, 255, 255);
+	plinit();
+
+	plscol0(1, 0, 0, 0);
+	plscol0(2, 200, 50, 50);
+	plscol0(3, 120, 120, 120);
+
+	plcol0(1);
+	plwidth(1.0);
+
+	plenv(0.0, (PLFLT)(num_samples - 1), -max_abs_delta, max_abs_delta, 0,
+	      0);
+
+	pllab("Timestep", "Prediction difference",
+	      "Model Prediction - Fixed Resistor Prediction");
+
+	/* Zero-reference line. */
+	{
+		PLFLT zero_x[2] = {0.0, (PLFLT)(num_samples - 1)};
+		PLFLT zero_y[2] = {0.0, 0.0};
+
+		plcol0(3);
+		plwidth(1.0);
+		plline(2, zero_x, zero_y);
+	}
+
+	plcol0(2);
+	plwidth(2.0);
+	plline((PLINT)num_samples, x, delta);
+
+	plend();
+
+	free(x);
+	free(delta);
+
+	return 0;
+}
+
+int plot_all_model_deltas(const double *predictions, const MemModel *models,
+			  size_t model_count, size_t num_samples,
+			  size_t num_outputs, size_t output_to_plot)
+{
+	PLFLT *x;
+	PLFLT *delta;
+	PLFLT max_delta = 0.0;
+	size_t predictions_per_model;
+
+	if (!predictions || !models || model_count < 2 || num_samples == 0 ||
+	    output_to_plot >= num_outputs)
+		return -1;
+
+	predictions_per_model = num_samples * num_outputs;
+
+	x = malloc(num_samples * sizeof(*x));
+	delta = malloc(num_samples * sizeof(*delta));
+
+	if (!x || !delta) {
+		free(x);
+		free(delta);
+		return -1;
+	}
+
+	for (size_t sample = 0; sample < num_samples; sample++)
+		x[sample] = (PLFLT)sample;
+
+	/*
+	 * Find the maximum deviation across every model so all curves
+	 * use exactly the same y-axis.
+	 */
+	for (size_t model = 1; model < model_count; model++) {
+		const double *fixed;
+		const double *model_predictions;
+
+		fixed = predictions;
+		model_predictions = predictions + model * predictions_per_model;
+
+		for (size_t sample = 0; sample < num_samples; sample++) {
+			size_t index;
+			double difference;
+
+			index = sample * num_outputs + output_to_plot;
+
+			difference =
+			    fabs(model_predictions[index] - fixed[index]);
+
+			if (difference > max_delta)
+				max_delta = (PLFLT)difference;
+		}
+	}
+
+	if (max_delta == 0.0)
+		max_delta = 1.0e-6;
+
+	max_delta *= 1.1;
+
+	plsdev("svg");
+	plsfnam("output/model_delta_comparison.svg");
+	plsetopt("geometry", "1600x1000");
+
+	plscolbg(255, 255, 255);
+	plinit();
+
+	plscol0(1, 0, 0, 0);
+	plscol0(2, 200, 50, 50);
+	plscol0(3, 30, 90, 200);
+	plscol0(4, 40, 150, 70);
+	plscol0(5, 160, 80, 180);
+	plscol0(6, 220, 130, 30);
+
+	plcol0(1);
+	plwidth(1.0);
+
+	plenv(0.0, (PLFLT)(num_samples - 1), 0.0, max_delta, 0, 0);
+
+	pllab("Timestep", "Absolute prediction difference",
+	      "Deviation from Fixed Resistor");
+
+	for (size_t model = 1; model < model_count; model++) {
+		const double *fixed;
+		const double *model_predictions;
+		PLINT color;
+
+		fixed = predictions;
+		model_predictions = predictions + model * predictions_per_model;
+
+		for (size_t sample = 0; sample < num_samples; sample++) {
+			size_t index;
+
+			index = sample * num_outputs + output_to_plot;
+
+			delta[sample] = (PLFLT)fabs(model_predictions[index] -
+						    fixed[index]);
+		}
+
+		color = (PLINT)(model + 1);
+
+		if (color > 6)
+			color = 2 + (PLINT)((model - 1) % 5);
+
+		plcol0(color);
+		plwidth(2.0);
+		plline((PLINT)num_samples, x, delta);
+	}
+
+	plend();
+
+	free(x);
+	free(delta);
 
 	return 0;
 }

@@ -7,7 +7,7 @@
 #include <stdlib.h>
 
 // spires reservoir parameters
-#define NUM_NEURONS 600
+#define NUM_NEURONS 400
 #define NUM_INPUTS 1
 #define NUM_OUTPUTS 1
 #define SPECTRAL_RADIUS 0.95
@@ -20,7 +20,7 @@
 #define PI 3.14159265358979323846
 #define LAMBDA 1.0e-4
 
-#define NUM_TRAINING_STEPS 500
+#define NUM_TRAINING_STEPS 5000
 #define NUM_CROSSBAR_COLUMNS (NUM_OUTPUTS * 2)
 // #define NUM_STEPS 2000
 
@@ -167,11 +167,32 @@ int main(void)
 				  state_matrix.num_samples, config.num_outputs);
 	}
 
+	double *fixed_predictions = predictions;
+	for (size_t model = 1; model < model_count; model++) {
+		double *model_predictions;
+
+		model_predictions = predictions + model * predictions_per_model;
+
+		if (plot_model_delta(fixed_predictions, model_predictions,
+				     state_matrix.num_samples,
+				     config.num_outputs, 0,
+				     models[model].model_path) < 0) {
+			fprintf(stderr, "Failed to plot model delta\n");
+		}
+	}
+
+	if (plot_all_model_deltas(predictions, models, model_count,
+				  state_matrix.num_samples, config.num_outputs,
+				  0) < 0) {
+		fprintf(stderr, "Failed to plot model delta comparison\n");
+	}
+
 	for (size_t model = 0; model < model_count; model++) {
 		printf("Model: %s, MSE: %.17g\n", models[model].model_path,
 		       mean_squared_error[model]);
 	}
 
+	/* ---------- Clean Up ----------*/
 	free(predictions);
 	free_reservoir_state_matrix(&state_matrix);
 	spires_reservoir_destroy(reservoir);
